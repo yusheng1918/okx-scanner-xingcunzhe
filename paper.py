@@ -173,6 +173,7 @@ def scan(s):
         up1d = r["m"]["1D"]["trend"] == "UP"
         aligned1d = (side == "LONG" and up1d) or (side == "SHORT" and not up1d)
         vr = None
+        opened = []
 
         for k in ACCOUNTS:
             if any(x["inst"] == inst for x in s[k]["pos"]) or s[k]["cap"] <= 0:
@@ -201,12 +202,25 @@ def scan(s):
             print(f"  [{k}] 开仓 {inst.split('-')[0]} {side} {lev:.2f}x 本金{cap:,.0f} "
                   f"名义{cap*lev:,.0f} 入场{entry:,.2f} 止损{stop:,.2f} 止盈{tp:,.2f}")
             if k in ("C", "D"):
-                rr = C_TP / C_STOP
-                extra = f"\n放量 {vr:.2f}x（门槛 {mult}x）" if k == "D" and vr else ""
-                notify(f"{k}开仓-{inst.split('-')[0]} {side} {entry:,.0f}",
-                       f"止损 {stop:,.2f}（-{C_STOP*100:.1f}%）\n"
-                       f"止盈 {tp:,.2f}（+{C_TP*100:.1f}%，盈亏比 {rr:.1f}）\n"
-                       f"风险 {C_RISK*100:.0f}% 本金 | 名义 {cap*lev:,.0f}U | 杠杆 {lev:.2f}x{extra}")
+                opened.append((k, entry, stop, tp, cap, lev))
+
+        # C / D 同一轮开仓 → 合并成一条推送
+        if len(opened) == 1:
+            k, entry, stop, tp, cap, lev = opened[0]
+            rr = C_TP / C_STOP
+            extra = f"\n放量 {vr:.2f}x（门槛 {mult}x）" if k == "D" and vr else ""
+            notify(f"{k}开仓-{inst.split('-')[0]} {side} {entry:,.0f}",
+                   f"止损 {stop:,.2f}（-{C_STOP*100:.1f}%）\n"
+                   f"止盈 {tp:,.2f}（+{C_TP*100:.1f}%，盈亏比 {rr:.1f}）\n"
+                   f"风险 {C_RISK*100:.0f}% 本金 | 名义 {cap*lev:,.0f}U | 杠杆 {lev:.2f}x{extra}")
+        elif len(opened) > 1:
+            k, entry, stop, tp, cap, lev = opened[0]
+            rr = C_TP / C_STOP
+            notify(f"C+D 开仓-{inst.split('-')[0]} {side} {entry:,.0f}",
+                   f"两个账户同时进场（C 与 D）\n"
+                   f"止损 {stop:,.2f}（-{C_STOP*100:.1f}%）\n"
+                   f"止盈 {tp:,.2f}（+{C_TP*100:.1f}%，盈亏比 {rr:.1f}）\n"
+                   f"风险 {C_RISK*100:.0f}% 本金 | 杠杆 {lev:.2f}x | 放量 {vr:.2f}x（门槛 {mult}x）")
     save_state(s)
 
 
