@@ -9,10 +9,13 @@ concurrency:
   group: okx-scan
   cancel-in-progress: false
 
+permissions:
+  contents: write
+
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
 
     steps:
       - uses: actions/checkout@v4
@@ -45,3 +48,25 @@ jobs:
             python paper.py --once || true
             sleep 60
           done
+
+      - name: Publish status
+        if: always()
+        run: |
+          {
+            echo "# 幸存者 · 模拟盘状态"
+            echo ""
+            echo "更新时间：$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S')"
+            echo ""
+            echo '```'
+            python paper.py --status 2>&1 || true
+            echo '```'
+            echo ""
+            echo "## 最近成交"
+            echo '```'
+            tail -n 15 paper_log.csv 2>/dev/null || echo "暂无成交"
+            echo '```'
+          } > STATUS.md
+          git config user.name "status-bot"
+          git config user.email "status-bot@users.noreply.github.com"
+          git add STATUS.md
+          git diff --cached --quiet && echo "状态无变化，跳过提交" || (git commit -m "status update [skip ci]" && git push)
