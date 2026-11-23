@@ -1,1 +1,45 @@
-survivor\deploy\okx-scan.yml
+name: OKX Scan Push
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: okx-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .scan_state.json
+            .paper_state.json
+            signals.csv
+            paper_log.csv
+          key: scan-state-${{ github.run_id }}
+          restore-keys: |
+            scan-state-
+
+      - name: Scan loop
+        env:
+          BARK_KEY: ${{ secrets.BARK_KEY }}
+          OKX_PROXY: ""
+        run: |
+          END=$((SECONDS + 330))
+          while [ $SECONDS -lt $END ]; do
+            python scanner.py --once || true
+            python paper.py --once || true
+            sleep 60
+          done
