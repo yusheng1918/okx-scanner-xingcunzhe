@@ -24,17 +24,13 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: actions/cache@v4
-        with:
-          path: |
-            .scan_state.json
-            .paper_state.json
-            .zone_state.json
-            signals.csv
-            paper_log.csv
-          key: scan-state-${{ github.run_id }}
-          restore-keys: |
-            scan-state-
+      - name: Restore state from repo
+        run: |
+          [ -f state/paper_state.json ] && cp state/paper_state.json .paper_state.json || true
+          [ -f state/scan_state.json ] && cp state/scan_state.json .scan_state.json || true
+          [ -f state/zone_state.json ] && cp state/zone_state.json .zone_state.json || true
+          [ -f state/paper_log.csv ] && cp state/paper_log.csv paper_log.csv || true
+          echo "状态恢复完成"
 
       - name: Scan loop
         env:
@@ -52,10 +48,13 @@ jobs:
       - name: Publish status
         if: always()
         run: |
+          mkdir -p state
+          [ -f .paper_state.json ] && cp .paper_state.json state/paper_state.json || true
+          [ -f .scan_state.json ] && cp .scan_state.json state/scan_state.json || true
+          [ -f .zone_state.json ] && cp .zone_state.json state/zone_state.json || true
+          [ -f paper_log.csv ] && cp paper_log.csv state/paper_log.csv || true
           {
             echo "# 幸存者 · 模拟盘状态"
-            echo ""
-            echo "更新时间：$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S')"
             echo ""
             echo '```'
             python paper.py --status 2>&1 || true
@@ -68,5 +67,5 @@ jobs:
           } > STATUS.md
           git config user.name "status-bot"
           git config user.email "status-bot@users.noreply.github.com"
-          git add STATUS.md
+          git add STATUS.md state
           git diff --cached --quiet && echo "状态无变化，跳过提交" || (git commit -m "status update [skip ci]" && git push)
