@@ -26,6 +26,7 @@ jobs:
           path: |
             .scan_state.json
             .paper_state.json
+            .zone_state.json
             signals.csv
             paper_log.csv
           key: scan-state-${{ github.run_id }}
@@ -37,9 +38,10 @@ jobs:
           BARK_KEY: ${{ secrets.BARK_KEY }}
           OKX_PROXY: ""
         run: |
-          END=$((SECONDS + 330))
+          END=$((SECONDS + 240))
           while [ $SECONDS -lt $END ]; do
             python scanner.py --once || true
+            python zones.py --once || true
             python paper.py --once || true
             sleep 60
           done
