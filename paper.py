@@ -144,12 +144,20 @@ def scan(s):
                 hit_stop = (px >= p["stop"]) if p["side"] == "SHORT" else (px <= p["stop"])
                 hit_tp = (px <= p["tp"]) if p["side"] == "SHORT" else (px >= p["tp"])
                 if hit_stop or hit_tp:
-                    pnl = close_position(s[k], p, px, "止损" if hit_stop else "止盈")
-                    print(f"  [{k}] 平仓 {inst.split('-')[0]} {p['side']} @{px:,.2f} "
-                          f"{'止损' if hit_stop else '止盈'} {pnl:+,.0f}U → 本金 {s[k]['cap']:,.0f}U")
+                    # 止损/止盈单按挂单价成交，只加 0.05% 滑点；
+                    # 不能用扫描时的现价，否则 60 秒间隔会把成交价算得离谱
+                    if hit_stop:
+                        fill = p["stop"] * (1 + 0.0005) if p["side"] == "SHORT" else p["stop"] * (1 - 0.0005)
+                        why = "止损"
+                    else:
+                        fill = p["tp"] * (1 - 0.0005) if p["side"] == "SHORT" else p["tp"] * (1 + 0.0005)
+                        why = "止盈"
+                    pnl = close_position(s[k], p, fill, why)
+                    print(f"  [{k}] 平仓 {inst.split('-')[0]} {p['side']} @{fill:,.2f}（现价 {px:,.2f}）"
+                          f" {why} {pnl:+,.0f}U → 本金 {s[k]['cap']:,.0f}U")
                     if k in ("C", "D"):
                         notify(f"{k}平仓-{inst.split('-')[0]} {p['side']} {pnl:+,.0f}U",
-                               f"{'止损' if hit_stop else '止盈'} @{px:,.2f}\n"
+                               f"{why} @{fill:,.2f}\n"
                                f"本金 {s[k]['cap']:,.0f}U（{(s[k]['cap']/START_CAP-1)*100:+.1f}%）")
 
         try:

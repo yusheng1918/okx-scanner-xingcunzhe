@@ -2,17 +2,23 @@
   "bark_key": "",
   "bark_server": "https://api.day.app",
   "proxy": "",
-  "insts": ["BTC-USDT-SWAP", "ETH-USDT-SWAP", "ZEC-USDT-SWAP", "SOL-USDT-SWAP"],
+  "insts": [
+    "BTC-USDT-SWAP",
+    "ETH-USDT-SWAP",
+    "ZEC-USDT-SWAP",
+    "SOL-USDT-SWAP"
+  ],
+  "d_vol_mult": 1.2,
+  "pre_alert_pct": 0.4,
   "sound": "bell",
   "level": "timeSensitive",
   "title_prefix": "幸存者-",
   "cooldown_min": 45,
   "max_push_per_hour": 6,
   "stop_pct": 0.018,
-  "tp_pct": 0.040,
+  "tp_pct": 0.04,
   "risk_pct": 2.0,
   "leverage": 5,
   "equity": 10000,
-  "bias_threshold": 0.35,
-  "d_vol_mult": 1.2
+  "bias_threshold": 0.35
 }

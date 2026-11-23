@@ -166,37 +166,70 @@ def check(quiet=False, dry=False):
     st = load_state()
     now = time.time()
     hits = []
+    pre = float(scanner.CFG.get("pre_alert_pct", 0.4)) / 100.0
     for inst in scanner.CFG["insts"]:
         if inst.split("-")[0].upper() not in __import__("paper").CRYPTO_OK:
             continue
         try:
             d = get(inst)
+            m15 = scanner.candles(inst, "15m", 20, ttl=ZONE_TTL)
         except Exception as e:
             if not quiet:
                 print(f"{inst} 区域计算失败: {e}")
             continue
         n = inst.split("-")[0]
         px = d["px"]
+        # 速度：过去 15 分钟每分钟变化多少点
+        spd = (px - m15[-2]["c"]) / 15.0 if len(m15) > 2 else 0.0
         for kind in ("sw", "sh", "lg"):
             z = d["zones"][kind]
-            if not (z["lo"] <= px <= z["hi"]):
-                continue
             if kind == "lg" and z.get("rr", 0) < 1.5:
                 continue
-            key = f"{inst}:{kind}"
-            if now - st.get(key, 0) < COOLDOWN:
-                continue
-            st[key] = now
             side = "空" if kind != "lg" else "多"
-            title = f"{n} 进入{z['name']}"
-            body = (f"现价 {px:,.2f}  区域 {z['lo']:,.0f}~{z['hi']:,.0f}\n"
-                    f"止损 {z['stop']:,.0f}  目标1 {z['t1']:,.0f}\n"
-                    f"RSI {d['rsi']:.0f} | 资金费率 {d['fr']*100:+.4f}% | 方向 {side}")
-            hits.append((title, body))
-            if not quiet:
-                print(f"  >>> {title}  现价 {px:,.2f} 区域 {z['lo']:,.0f}~{z['hi']:,.0f}")
-            if not dry:
-                scanner.bark(title, body)
+            inside = z["lo"] <= px <= z["hi"]
+            # 逼近判定：空区在价格上方，多区在价格下方
+            if kind == "lg":
+                approaching = (z["hi"] < px <= z["hi"] * (1 + pre)) and spd < 0
+                remain = px - z["hi"]
+                eta = remain / abs(spd) if spd < 0 and abs(spd) > 1e-9 else None
+            else:
+                approaching = (z["lo"] * (1 - pre) <= px < z["lo"]) and spd > 0
+                remain = z["lo"] - px
+                eta = remain / spd if spd > 0 and spd > 1e-9 else None
+
+            key_in = f"{inst}:{kind}"
+            key_pre = f"{inst}:{kind}:pre"
+
+            if inside and now - st.get(key_in, 0) >= COOLDOWN:
+                st[key_in] = now
+                title = f"{n} 进入{z['name']}"
+                body = (f"现价 {px:,.2f}  区域 {z['lo']:,.0f}~{z['hi']:,.0f}\n"
+                        f"止损 {z['stop']:,.0f}  目标1 {z['t1']:,.0f}\n"
+                        f"RSI {d['rsi']:.0f} | 资金费率 {d['fr']*100:+.4f}% | 方向 {side}")
+                hits.append((title, body))
+                if not quiet:
+                    print(f"  >>> {title}  现价 {px:,.2f}")
+                if not dry:
+                    scanner.bark(title, body)
+
+            elif approaching and now - st.get(key_pre, 0) >= COOLDOWN and now - st.get(key_in, 0) >= COOLDOWN:
+                st[key_pre] = now
+                pct = remain / px * 100
+                eta_txt = ""
+                if eta and 1 <= eta <= 180:
+                    eta_txt = f"，约 {int(round(eta))} 分钟"
+                elif eta and eta > 180:
+                    eta_txt = "，距离较远"
+                title = f"{n} 逼近{z['name']}"
+                body = (f"现价 {px:,.2f}  距 {z['lo']:,.2f} 还有 {pct:.2f}%{eta_txt}\n"
+                        f"提前挂单：区域 {z['lo']:,.2f}~{z['hi']:,.2f}\n"
+                        f"止损 {z['stop']:,.2f}  目标1 {z['t1']:,.2f}\n"
+                        f"RSI {d['rsi']:.0f} | 方向 {side} | 别追，等价格到")
+                hits.append((title, body))
+                if not quiet:
+                    print(f"  >>  {title}  现价 {px:,.2f}  还差 {pct:.2f}%")
+                if not dry:
+                    scanner.bark(title, body)
     save_state(st)
     return hits
 
