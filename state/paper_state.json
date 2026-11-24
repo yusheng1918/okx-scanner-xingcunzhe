@@ -2,8 +2,42 @@
  "_v": 2,
  "A": {
   "cap": 10000.0,
-  "used": 0.0,
-  "pos": [],
+  "used": 4500.0,
+  "pos": [
+   {
+    "acct": "A",
+    "inst": "BTC-USDT-SWAP",
+    "side": "SHORT",
+    "entry": 60163.6,
+    "stop": 61246.544799999996,
+    "tp": 57757.056,
+    "lev": 8.0,
+    "margin": 1500.0,
+    "open_ts": 1795527595.773252
+   },
+   {
+    "acct": "A",
+    "inst": "ETH-USDT-SWAP",
+    "side": "SHORT",
+    "entry": 1695.49,
+    "stop": 1726.00882,
+    "tp": 1627.6704,
+    "lev": 8.0,
+    "margin": 1500.0,
+    "open_ts": 1795527597.5127835
+   },
+   {
+    "acct": "A",
+    "inst": "ZEC-USDT-SWAP",
+    "side": "SHORT",
+    "entry": 727.16,
+    "stop": 740.24888,
+    "tp": 698.0735999999999,
+    "lev": 8.0,
+    "margin": 1500.0,
+    "open_ts": 1795527599.5364916
+   }
+  ],
   "wins": 0,
   "closed": 0,
   "peak": 10000.0,
@@ -11,8 +45,42 @@
  },
  "B": {
   "cap": 10000.0,
-  "used": 0.0,
-  "pos": [],
+  "used": 4500.0,
+  "pos": [
+   {
+    "acct": "B",
+    "inst": "BTC-USDT-SWAP",
+    "side": "SHORT",
+    "entry": 60163.6,
+    "stop": 61246.544799999996,
+    "tp": 57757.056,
+    "lev": 8.0,
+    "margin": 1500.0,
+    "open_ts": 1795527595.773278
+   },
+   {
+    "acct": "B",
+    "inst": "ETH-USDT-SWAP",
+    "side": "SHORT",
+    "entry": 1695.49,
+    "stop": 1726.00882,
+    "tp": 1627.6704,
+    "lev": 8.0,
+    "margin": 1500.0,
+    "open_ts": 1795527597.512799
+   },
+   {
+    "acct": "B",
+    "inst": "ZEC-USDT-SWAP",
+    "side": "SHORT",
+    "entry": 727.16,
+    "stop": 740.24888,
+    "tp": 698.0735999999999,
+    "lev": 8.0,
+    "margin": 1500.0,
+    "open_ts": 1795527599.536508
+   }
+  ],
   "wins": 0,
   "closed": 0,
   "peak": 10000.0,
@@ -20,8 +88,42 @@
  },
  "C": {
   "cap": 10000.0,
-  "used": 0.0,
-  "pos": [],
+  "used": 4500.0,
+  "pos": [
+   {
+    "acct": "C",
+    "inst": "BTC-USDT-SWAP",
+    "side": "SHORT",
+    "entry": 60163.6,
+    "stop": 61246.544799999996,
+    "tp": 57757.056,
+    "lev": 5.0,
+    "margin": 1500.0,
+    "open_ts": 1795527595.773285
+   },
+   {
+    "acct": "C",
+    "inst": "ETH-USDT-SWAP",
+    "side": "SHORT",
+    "entry": 1695.49,
+    "stop": 1726.00882,
+    "tp": 1627.6704,
+    "lev": 5.0,
+    "margin": 1500.0,
+    "open_ts": 1795527597.512804
+   },
+   {
+    "acct": "C",
+    "inst": "ZEC-USDT-SWAP",
+    "side": "SHORT",
+    "entry": 727.16,
+    "stop": 740.24888,
+    "tp": 698.0735999999999,
+    "lev": 5.0,
+    "margin": 1500.0,
+    "open_ts": 1795527599.5365133
+   }
+  ],
   "wins": 0,
   "closed": 0,
   "peak": 10000.0,
