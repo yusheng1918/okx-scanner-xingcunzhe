@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-三账户模拟盘（实时对比）
-------------------------
-A：统一 8 倍，满仓复利（你原本的想法）
-B：顺势 8 倍 / 逆势 4 倍，满仓复利
-C：优化版 —— 只做 4H 顺势，止损 1.8% / 止盈 4.0%，单笔风险 2% 本金（实际杠杆≈1.1x）
+幸存者 · 模拟盘 v2（真实保证金模式）
+------------------------------------
+改动要点：
+  1) 每笔开仓按「当前权益 × 15%」占用保证金，并检查可用资金
+  2) 保证金占用超过权益 85% 时不再开新仓（真实账户开不出）
+  3) 逐仓模式：单笔最大亏损 = 该笔保证金，不会亏到别的仓位
+  4) 强平：逆向波动超过 (1/杠杆 - 0.5%) 时按强平价平仓
+  5) 四个账户杠杆不同，其余规则一致，用来对比杠杆差异
 
-三账户都从 10,000 U 起步，盈亏计入本金滚动。
+账户：
+  A  固定 8 倍
+  B  顺势 8 倍 / 逆势 4 倍
+  C  固定 5 倍
+  D  固定 5 倍 + 放量过滤
 
 用法：
-  python paper.py --status
-  python paper.py --once
-  python paper.py --loop 60
-  python paper.py --reset
+  python paper.py --status / --once / --loop 60 / --reset
 """
 
 import argparse
@@ -33,25 +37,16 @@ LOG = os.path.join(HERE, "paper_log.csv")
 BJ = timezone(timedelta(hours=8))
 FEE = 0.0005
 START_CAP = 10000.0
+SCHEMA = 2
 
-C_STOP, C_TP, C_RISK = 0.018, 0.040, 0.02
-
-# 账户D：与C规则完全相同，但入场加"放量确认"闸门
-#   放量 = 最近一根已收盘 1m K 线成交量 >= 前 20 根均量 × d_vol_mult
-#   门槛写在 config.json 的 d_vol_mult，可随时改（每分钟重新读取，不用重启）
+C_STOP, C_TP = 0.018, 0.040          # 止损 / 止盈
+MARGIN_PCT = 0.15                     # 单笔保证金 = 权益 × 15%
+MAX_USE = 0.85                        # 保证金占用上限 85%
 D_VOL_DEFAULT = 1.2
 ACCOUNTS = ("A", "B", "C", "D")
+LEV = {"A": 8.0, "B": 8.0, "C": 5.0, "D": 5.0}
+DESC = {"A": "固定8倍", "B": "顺势8/逆势4", "C": "固定5倍", "D": "5倍+放量过滤"}
 
-
-def d_vol_mult():
-    """每次扫描都读一次配置，改了立即生效"""
-    try:
-        with open(os.path.join(HERE, "config.json"), encoding="utf-8-sig") as f:
-            return float(json.load(f).get("d_vol_mult", D_VOL_DEFAULT))
-    except Exception:
-        return D_VOL_DEFAULT
-
-# 只做加密货币，股票代币一律不碰（SNDK/MU/SKHYNIX 等）
 CRYPTO_OK = {"BTC", "ETH", "ZEC", "SOL", "XRP", "DOGE", "BNB", "LTC", "BCH", "ADA",
              "AVAX", "LINK", "TRX", "DOT", "SUI", "APT", "ARB", "OP", "TON", "NEAR"}
 
@@ -60,8 +55,15 @@ def is_crypto(inst):
     return inst.split("-")[0].upper() in CRYPTO_OK
 
 
+def d_vol_mult():
+    try:
+        with open(os.path.join(HERE, "config.json"), encoding="utf-8-sig") as f:
+            return float(json.load(f).get("d_vol_mult", D_VOL_DEFAULT))
+    except Exception:
+        return D_VOL_DEFAULT
+
+
 def vol_ratio(inst):
-    """最近一根已收盘 1m K 线成交量 / 前 20 根均量"""
     try:
         cs = scanner.candles(inst, "1m", 40, ttl=45)
     except Exception:
@@ -80,16 +82,9 @@ def notify(title, body):
         print(f"  推送失败: {e}")
 
 
-def load_state():
-    if os.path.exists(STATE):
-        with open(STATE, encoding="utf-8-sig") as f:
-            s = json.load(f)
-    else:
-        s = {}
-    for k in ACCOUNTS:            # 兼容旧状态文件，缺账户自动补
-        s.setdefault(k, {"cap": START_CAP, "pos": [], "wins": 0, "closed": 0,
-                         "peak": START_CAP, "mdd": 0.0})
-    return s
+def _new_acc():
+    return {"cap": START_CAP, "used": 0.0, "pos": [], "wins": 0, "closed": 0,
+            "peak": START_CAP, "mdd": 0.0}
 
 
 def save_state(s):
@@ -97,15 +92,48 @@ def save_state(s):
         json.dump(s, f, ensure_ascii=False, indent=1)
 
 
+def load_state():
+    s = {}
+    if os.path.exists(STATE):
+        try:
+            with open(STATE, encoding="utf-8-sig") as f:
+                s = json.load(f)
+        except Exception:
+            s = {}
+    if s.get("_v") != SCHEMA:          # 算法升级 → 全部重置，避免新旧混算
+        s = {"_v": SCHEMA}
+        for k in ACCOUNTS:
+            s[k] = _new_acc()
+        save_state(s)
+        print("[paper] 检测到算法升级，四个账户重置为 10,000")
+    for k in ACCOUNTS:
+        s.setdefault(k, _new_acc())
+    return s
+
+
 def price(inst):
     return float(scanner.api("/api/v5/market/ticker", instId=inst)[0]["last"])
 
 
+def unrealized(acc, pxmap):
+    total = 0.0
+    for p in acc["pos"]:
+        px = pxmap.get(p["inst"])
+        if px is None:
+            continue
+        move = (p["entry"] - px) / p["entry"] if p["side"] == "SHORT" else (px - p["entry"]) / p["entry"]
+        pnl = p["margin"] * p["lev"] * move - p["margin"] * p["lev"] * FEE * 2
+        total += max(pnl, -p["margin"])          # 逐仓：最多亏掉保证金
+    return total
+
+
 def close_position(acc, p, px, why):
-    ret = (p["entry"] - px) / p["entry"] if p["side"] == "SHORT" else (px - p["entry"]) / p["entry"]
+    move = (p["entry"] - px) / p["entry"] if p["side"] == "SHORT" else (px - p["entry"]) / p["entry"]
     notional = p["margin"] * p["lev"]
-    pnl = notional * ret - notional * FEE * 2
+    pnl = notional * move - notional * FEE * 2
+    pnl = max(pnl, -p["margin"])                 # 逐仓，最多亏完保证金
     acc["cap"] += pnl
+    acc["used"] = max(0.0, acc["used"] - p["margin"])
     acc["closed"] += 1
     if pnl > 0:
         acc["wins"] += 1
@@ -119,16 +147,26 @@ def close_position(acc, p, px, why):
 
 
 def status(s):
-    print(f"\n{'账户':<4}{'本金':>12}{'收益':>9}{'已平仓':>7}{'胜率':>7}{'持仓':>5}{'回撤':>7}")
-    for k in ACCOUNTS:
-        a = s[k]
-        wr = a["wins"] / a["closed"] * 100 if a["closed"] else 0
-        print(f"{k:<4}{a['cap']:>12,.0f}{(a['cap']/START_CAP-1)*100:>8.1f}%{a['closed']:>7}"
-              f"{wr:>6.1f}%{len(a['pos']):>5}{a['mdd']*100:>6.1f}%")
+    pxmap = {}
     for k in ACCOUNTS:
         for p in s[k]["pos"]:
-            print(f"  {k} 持仓 {p['inst'].split('-')[0]:4s} {p['side']:5s} {p['lev']:.2f}x "
-                  f"入场{p['entry']:,.2f} 止损{p['stop']:,.2f} 止盈{p['tp']:,.2f}")
+            if p["inst"] not in pxmap:
+                try:
+                    pxmap[p["inst"]] = price(p["inst"])
+                except Exception:
+                    pxmap[p["inst"]] = None
+    print(f"\n{'账户':<4}{'本金':>10}{'浮盈':>9}{'权益':>10}{'已用保证金':>11}{'可用':>9}{'持仓':>5}{'回撤':>7}")
+    for k in ACCOUNTS:
+        a = s[k]
+        u = unrealized(a, pxmap)
+        eq = a["cap"] + u
+        free = eq - a["used"]
+        print(f"{k:<4}{a['cap']:>10,.0f}{u:>+9,.0f}{eq:>10,.0f}{a['used']:>11,.0f}{free:>9,.0f}"
+              f"{len(a['pos']):>5}{a['mdd']*100:>6.1f}%")
+    for k in ACCOUNTS:
+        for p in s[k]["pos"]:
+            print(f"  {k} {p['inst'].split('-')[0]:4s} {p['side']:5s} {p['lev']:.1f}x "
+                  f"入场{p['entry']:,.2f} 止损{p['stop']:,.2f} 止盈{p['tp']:,.2f} 保证金{p['margin']:,.0f}")
 
 
 def scan(s):
@@ -137,15 +175,24 @@ def scan(s):
         if not is_crypto(inst):
             continue
         px = price(inst)
+        pxmap = {inst: px}
+
         for k in ACCOUNTS:
             for p in list(s[k]["pos"]):
                 if p["inst"] != inst:
                     continue
+                liq_px = (p["entry"] * (1 + 1 / p["lev"] - 0.005) if p["side"] == "SHORT"
+                          else p["entry"] * (1 - 1 / p["lev"] + 0.005))
+                hit_liq = (px >= liq_px) if p["side"] == "SHORT" else (px <= liq_px)
                 hit_stop = (px >= p["stop"]) if p["side"] == "SHORT" else (px <= p["stop"])
                 hit_tp = (px <= p["tp"]) if p["side"] == "SHORT" else (px >= p["tp"])
-                if hit_stop or hit_tp:
-                    # 止损/止盈单按挂单价成交，只加 0.05% 滑点；
-                    # 不能用扫描时的现价，否则 60 秒间隔会把成交价算得离谱
+                if hit_liq:
+                    pnl = close_position(s[k], p, liq_px, "强平")
+                    print(f"  [{k}] 强平 {inst.split('-')[0]} {p['side']} @{liq_px:,.2f} {pnl:+,.0f}U")
+                    if k in ("C", "D"):
+                        notify(f"{k}强平-{inst.split('-')[0]} {pnl:+,.0f}U",
+                               f"保证金亏完 @{liq_px:,.2f}\n本金 {s[k]['cap']:,.0f}U")
+                elif hit_stop or hit_tp:
                     if hit_stop:
                         fill = p["stop"] * (1 + 0.0005) if p["side"] == "SHORT" else p["stop"] * (1 - 0.0005)
                         why = "止损"
@@ -153,12 +200,11 @@ def scan(s):
                         fill = p["tp"] * (1 - 0.0005) if p["side"] == "SHORT" else p["tp"] * (1 + 0.0005)
                         why = "止盈"
                     pnl = close_position(s[k], p, fill, why)
-                    print(f"  [{k}] 平仓 {inst.split('-')[0]} {p['side']} @{fill:,.2f}（现价 {px:,.2f}）"
-                          f" {why} {pnl:+,.0f}U → 本金 {s[k]['cap']:,.0f}U")
+                    print(f"  [{k}] 平仓 {inst.split('-')[0]} {p['side']} @{fill:,.2f} {why} "
+                          f"{pnl:+,.0f}U → 本金 {s[k]['cap']:,.0f}U")
                     if k in ("C", "D"):
                         notify(f"{k}平仓-{inst.split('-')[0]} {p['side']} {pnl:+,.0f}U",
-                               f"{why} @{fill:,.2f}\n"
-                               f"本金 {s[k]['cap']:,.0f}U（{(s[k]['cap']/START_CAP-1)*100:+.1f}%）")
+                               f"{why} @{fill:,.2f}\n本金 {s[k]['cap']:,.0f}U（{(s[k]['cap']/START_CAP-1)*100:+.1f}%）")
 
         try:
             r = scanner.analyse(inst)
@@ -176,51 +222,51 @@ def scan(s):
         opened = []
 
         for k in ACCOUNTS:
-            if any(x["inst"] == inst for x in s[k]["pos"]) or s[k]["cap"] <= 0:
+            if any(x["inst"] == inst for x in s[k]["pos"]):
                 continue
-            cap = s[k]["cap"]
-            if k in ("C", "D"):
-                if not aligned4:
+            if k in ("C", "D") and not aligned4:
+                continue
+            if k == "D":
+                if vr is None:
+                    vr = vol_ratio(inst)
+                if vr < mult:
+                    print(f"  [D] 跳过 {inst.split('-')[0]}：放量不足 {vr:.2f}x < {mult}x")
                     continue
-                if k == "D":
-                    if vr is None:
-                        vr = vol_ratio(inst)
-                    if vr < mult:
-                        print(f"  [D] 跳过 {inst.split('-')[0]}：放量不足 {vr:.2f}x < {mult}x")
-                        continue
-                entry = px
-                stop = entry * (1 + C_STOP) if side == "SHORT" else entry * (1 - C_STOP)
-                tp = entry * (1 - C_TP) if side == "SHORT" else entry * (1 + C_TP)
-                lev = min(5.0, C_RISK / C_STOP)
-                margin = cap
-            else:
-                entry, stop, tp = plan["entry"], plan["stop"], plan["tp1"]
-                lev = 8 if k == "A" else (8 if aligned1d else 4)
-                margin = cap
-            s[k]["pos"].append(dict(acct=k, inst=inst, side=side, entry=entry, stop=stop,
-                                    tp=tp, lev=lev, margin=margin, open_ts=time.time()))
-            print(f"  [{k}] 开仓 {inst.split('-')[0]} {side} {lev:.2f}x 本金{cap:,.0f} "
-                  f"名义{cap*lev:,.0f} 入场{entry:,.2f} 止损{stop:,.2f} 止盈{tp:,.2f}")
-            if k in ("C", "D"):
-                opened.append((k, entry, stop, tp, cap, lev))
 
-        # C / D 同一轮开仓 → 合并成一条推送
+            a = s[k]
+            lev = LEV[k]
+            if k == "B" and not aligned1d:
+                lev = 4.0
+            eq = a["cap"] + unrealized(a, pxmap)
+            margin = eq * MARGIN_PCT
+            if a["used"] + margin > eq * MAX_USE:
+                print(f"  [{k}] 保证金不足（已用 {a['used']:,.0f} / 上限 {eq*MAX_USE:,.0f}），跳过")
+                continue
+
+            entry = px
+            stop = entry * (1 + C_STOP) if side == "SHORT" else entry * (1 - C_STOP)
+            tp = entry * (1 - C_TP) if side == "SHORT" else entry * (1 + C_TP)
+            s[k]["pos"].append(dict(acct=k, inst=inst, side=side, entry=entry, stop=stop, tp=tp,
+                                    lev=lev, margin=margin, open_ts=time.time()))
+            a["used"] += margin
+            print(f"  [{k}] 开仓 {inst.split('-')[0]} {side} {lev:.1f}x 保证金{margin:,.0f} "
+                  f"名义{margin*lev:,.0f} 入场{entry:,.2f} 止损{stop:,.2f} 止盈{tp:,.2f}")
+            if k in ("C", "D"):
+                opened.append((k, entry, stop, tp, margin, lev))
+
         if len(opened) == 1:
-            k, entry, stop, tp, cap, lev = opened[0]
-            rr = C_TP / C_STOP
+            k, entry, stop, tp, margin, lev = opened[0]
             extra = f"\n放量 {vr:.2f}x（门槛 {mult}x）" if k == "D" and vr else ""
             notify(f"{k}开仓-{inst.split('-')[0]} {side} {entry:,.0f}",
                    f"止损 {stop:,.2f}（-{C_STOP*100:.1f}%）\n"
-                   f"止盈 {tp:,.2f}（+{C_TP*100:.1f}%，盈亏比 {rr:.1f}）\n"
-                   f"风险 {C_RISK*100:.0f}% 本金 | 名义 {cap*lev:,.0f}U | 杠杆 {lev:.2f}x{extra}")
+                   f"止盈 {tp:,.2f}（+{C_TP*100:.1f}%）\n"
+                   f"保证金 {margin:,.0f}U | 名义 {margin*lev:,.0f}U | {lev:.1f}x{extra}")
         elif len(opened) > 1:
-            k, entry, stop, tp, cap, lev = opened[0]
-            rr = C_TP / C_STOP
+            k, entry, stop, tp, margin, lev = opened[0]
             notify(f"C+D 开仓-{inst.split('-')[0]} {side} {entry:,.0f}",
-                   f"两个账户同时进场（C 与 D）\n"
-                   f"止损 {stop:,.2f}（-{C_STOP*100:.1f}%）\n"
-                   f"止盈 {tp:,.2f}（+{C_TP*100:.1f}%，盈亏比 {rr:.1f}）\n"
-                   f"风险 {C_RISK*100:.0f}% 本金 | 杠杆 {lev:.2f}x | 放量 {vr:.2f}x（门槛 {mult}x）")
+                   f"两个账户同时进场\n止损 {stop:,.2f}（-{C_STOP*100:.1f}%）\n"
+                   f"止盈 {tp:,.2f}（+{C_TP*100:.1f}%）\n"
+                   f"保证金 {margin:,.0f}U | {lev:.1f}x | 放量 {vr:.2f}x")
     save_state(s)
 
 
