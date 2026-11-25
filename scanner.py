@@ -251,14 +251,77 @@ def bark(title, body, dry=False):
 def load_state():
     try:
         with open(STATE, encoding="utf-8") as f:
-            return json.load(f)
+            s = json.load(f)
     except Exception:
-        return {"cooldown": {}, "pushes": []}
+        s = {}
+    s.setdefault("cooldown", {})
+    s.setdefault("pushes", [])
+    s.setdefault("open", [])                       # 已发出、尚未止盈止损的信号
+    s.setdefault("stats", {"n": 0, "w": 0, "l": 0, "r": 0.0})
+    return s
 
 
 def save_state(s):
     with open(STATE, "w", encoding="utf-8") as f:
         json.dump(s, f)
+
+
+def stats_line(st):
+    s = st["stats"]
+    n = s["n"]
+    wr = (s["w"] / n * 100) if n else 0.0
+    return f"累计 {n} 笔 | 胜 {s['w']} 负 {s['l']} | 胜率 {wr:.1f}% | {s['r']:+.1f}R"
+
+
+def check_tracked(st, inst, px, dry=False):
+    """检查已发出的信号是否触发止盈/止损，并推送结果"""
+    keep = []
+    for t in st["open"]:
+        if t["inst"] != inst:
+            keep.append(t)
+            continue
+        side = t["side"]
+        res = None
+        if side == "SHORT":
+            if px >= t["stop"]:
+                res = ("止损", t["stop"])
+            elif px <= t["tp1"]:
+                res = ("止盈", t["tp1"])
+        else:
+            if px <= t["stop"]:
+                res = ("止损", t["stop"])
+            elif px >= t["tp1"]:
+                res = ("止盈", t["tp1"])
+        if res is None:
+            if time.time() - t["ts"] > 72 * 3600:
+                res = ("超时", px)
+            else:
+                keep.append(t)
+                continue
+
+        why, out_px = res
+        risk = abs(t["entry"] - t["stop"])
+        move = ((t["entry"] - out_px) if side == "SHORT" else (out_px - t["entry"])) / t["entry"]
+        pnl = t["margin"] * t["lev"] * move - t["margin"] * t["lev"] * 0.001
+        r = (move * t["entry"]) / risk if risk else 0.0
+
+        st["stats"]["n"] += 1
+        st["stats"]["r"] += r
+        if r > 0:
+            st["stats"]["w"] += 1
+        else:
+            st["stats"]["l"] += 1
+
+        hold = (time.time() - t["ts"]) / 3600
+        icon = "✅" if r > 0 else "❌"
+        title = f"{t['name']} {t['side_cn']} {t['entry']:,.0f} 已{why}{icon}"
+        body = (f"出场 {out_px:,.2f}（{move*100:+.1f}%）| 持有 {hold:.1f} 小时\n"
+                f"盈亏 {pnl:+,.0f}U（保证金 {t['margin']:,.0f}U @{t['lev']:.0f}x）\n"
+                f"{stats_line(st)}")
+        print(f"  [追踪] {title}  {pnl:+,.0f}U  [{stats_line(st)}]")
+        if not dry:
+            bark(title, body)
+    st["open"] = keep[:60]
 
 
 def brief(m):
@@ -282,6 +345,7 @@ def scan(dry=False):
         print(f"{n:4s} {r['px']:>10.2f} | 周{m['1W']['trend'][:1]} 日{m['1D']['trend'][:1]} "
               f"4H{m['4H']['trend'][:1]} 1H{m['1H']['trend'][:1]} 15m{m['15m']['trend'][:1]} "
               f"| 共振 {r['bias']:+.2f} | RSI {r['rsi']:.1f}")
+        check_tracked(st, inst, r["px"], dry)   # 先结算已有信号的止盈/止损
         p = r["plan"]
         if not p:
             continue
@@ -311,6 +375,10 @@ def scan(dry=False):
         print(f"  >>> {side_cn} {p['why']}")
         print(f"      入场 {p['entry']:,.2f} 止损 {p['stop']:,.2f} TP1 {p['tp1']:,.2f} TP2 {p['tp2']:,.2f}")
         bark(title, body, dry=dry)
+        # 记录这条信号，等它止盈/止损后再推一条结果
+        st["open"].append(dict(inst=inst, name=n, side=p["side"], side_cn=side_cn,
+                               entry=p["entry"], stop=p["stop"], tp1=p["tp1"],
+                               margin=margin, lev=lev, ts=now))
         st["cooldown"][key] = now
         st["pushes"].append(now)
         with open(LOG, "a", encoding="utf-8-sig") as f:
