@@ -210,7 +210,7 @@ def scan(s):
                     pnl, mv, rr, hold = close_position(s[k], p, liq_px, "强平")
                     print(f"  [{k}] 强平 {inst.split('-')[0]} {p['side']} @{liq_px:,.2f} {pnl:+,.0f}U")
                     if k in ("C", "D"):
-                        notify(f"{k}强平-{inst.split('-')[0]} {SCN.get(p['side'], p['side'])} {pnl:+,.0f}U",
+                        notify(f"模拟盘强平-{k} {inst.split('-')[0]} {pnl:+,.0f}U",
                                close_body(s[k], p, liq_px, "强平", pnl, mv, rr, hold))
                 elif hit_stop or hit_tp:
                     if hit_stop:
@@ -223,7 +223,7 @@ def scan(s):
                     print(f"  [{k}] 平仓 {inst.split('-')[0]} {p['side']} @{fill:,.2f} {why} "
                           f"{pnl:+,.0f}U → 本金 {s[k]['cap']:,.0f}U")
                     if k in ("C", "D"):
-                        notify(f"{k}平仓-{inst.split('-')[0]} {SCN.get(p['side'], p['side'])} {pnl:+,.0f}U",
+                        notify(f"模拟盘平仓-{k} {inst.split('-')[0]} {SCN.get(p['side'], p['side'])} {pnl:+,.0f}U",
                                close_body(s[k], p, fill, why, pnl, mv, rr, hold))
 
         try:
@@ -277,13 +277,13 @@ def scan(s):
         if len(opened) == 1:
             k, entry, stop, tp, margin, lev = opened[0]
             extra = f"\n放量 {vr:.2f}x（门槛 {mult}x）" if k == "D" and vr else ""
-            notify(f"{k}开仓-{inst.split('-')[0]} {SCN.get(side, side)} {entry:,.0f}",
+            notify(f"模拟盘开{SCN.get(side, side)}-{k} {inst.split('-')[0]} {entry:,.0f}",
                    f"止损 {stop:,.2f}（-{C_STOP*100:.1f}%）\n"
                    f"止盈 {tp:,.2f}（+{C_TP*100:.1f}%）\n"
                    f"保证金 {margin:,.0f}U | 名义 {margin*lev:,.0f}U | {lev:.1f}x{extra}")
         elif len(opened) > 1:
             k, entry, stop, tp, margin, lev = opened[0]
-            notify(f"C+D 开仓-{inst.split('-')[0]} {SCN.get(side, side)} {entry:,.0f}",
+            notify(f"模拟盘开{SCN.get(side, side)}-C+D {inst.split('-')[0]} {entry:,.0f}",
                    f"两个账户同时进场\n止损 {stop:,.2f}（-{C_STOP*100:.1f}%）\n"
                    f"止盈 {tp:,.2f}（+{C_TP*100:.1f}%）\n"
                    f"保证金 {margin:,.0f}U | {lev:.1f}x | 放量 {vr:.2f}x")
