@@ -20,5 +20,6 @@
   "risk_pct": 2.0,
   "leverage": 5,
   "equity": 10000,
-  "bias_threshold": 0.35
+  "bias_threshold": 0.35,
+  "margin_pct": 15
 }

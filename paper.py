@@ -44,6 +44,7 @@ MARGIN_PCT = 0.15                     # 单笔保证金 = 权益 × 15%
 MAX_USE = 0.85                        # 保证金占用上限 85%
 D_VOL_DEFAULT = 1.2
 ACCOUNTS = ("A", "B", "C", "D")
+SCN = {"SHORT": "空", "LONG": "多"}
 LEV = {"A": 8.0, "B": 8.0, "C": 5.0, "D": 5.0}
 DESC = {"A": "固定8倍", "B": "顺势8/逆势4", "C": "固定5倍", "D": "5倍+放量过滤"}
 
@@ -203,7 +204,7 @@ def scan(s):
                     print(f"  [{k}] 平仓 {inst.split('-')[0]} {p['side']} @{fill:,.2f} {why} "
                           f"{pnl:+,.0f}U → 本金 {s[k]['cap']:,.0f}U")
                     if k in ("C", "D"):
-                        notify(f"{k}平仓-{inst.split('-')[0]} {p['side']} {pnl:+,.0f}U",
+                        notify(f"{k}平仓-{inst.split('-')[0]} {SCN.get(p['side'], p['side'])} {pnl:+,.0f}U",
                                f"{why} @{fill:,.2f}\n本金 {s[k]['cap']:,.0f}U（{(s[k]['cap']/START_CAP-1)*100:+.1f}%）")
 
         try:
@@ -257,13 +258,13 @@ def scan(s):
         if len(opened) == 1:
             k, entry, stop, tp, margin, lev = opened[0]
             extra = f"\n放量 {vr:.2f}x（门槛 {mult}x）" if k == "D" and vr else ""
-            notify(f"{k}开仓-{inst.split('-')[0]} {side} {entry:,.0f}",
+            notify(f"{k}开仓-{inst.split('-')[0]} {SCN.get(side, side)} {entry:,.0f}",
                    f"止损 {stop:,.2f}（-{C_STOP*100:.1f}%）\n"
                    f"止盈 {tp:,.2f}（+{C_TP*100:.1f}%）\n"
                    f"保证金 {margin:,.0f}U | 名义 {margin*lev:,.0f}U | {lev:.1f}x{extra}")
         elif len(opened) > 1:
             k, entry, stop, tp, margin, lev = opened[0]
-            notify(f"C+D 开仓-{inst.split('-')[0]} {side} {entry:,.0f}",
+            notify(f"C+D 开仓-{inst.split('-')[0]} {SCN.get(side, side)} {entry:,.0f}",
                    f"两个账户同时进场\n止损 {stop:,.2f}（-{C_STOP*100:.1f}%）\n"
                    f"止盈 {tp:,.2f}（+{C_TP*100:.1f}%）\n"
                    f"保证金 {margin:,.0f}U | {lev:.1f}x | 放量 {vr:.2f}x")

@@ -293,18 +293,22 @@ def scan(dry=False):
             print("  (本小时推送超限，跳过)")
             continue
         eq = CFG["equity"]
-        notional = eq * CFG["risk_pct"] / 100 / (p["risk_pct"] / 100)
-        margin = notional / CFG["leverage"]
+        # 与模拟盘一致的口径：保证金 = 权益 × 15%，名义 = 保证金 × 杠杆
+        mpct = CFG.get("margin_pct", 15) / 100.0
+        lev = CFG.get("leverage", 5)
+        margin = eq * mpct
+        notional = margin * lev
+        side_cn = "空" if p["side"] == "SHORT" else "多"
         day = {"UP": "多", "DOWN": "空", "RANGE": "震荡"}[m["1D"]["trend"]]
         week = {"UP": "多", "DOWN": "空", "RANGE": "震荡"}[m["1W"]["trend"]]
-        title = f"{n} {p['side']} {p['entry']:,.0f}"
+        title = f"{n} {side_cn} {p['entry']:,.0f}"
         body = (f"日线趋势:{day} | 周线:{week}\n"
                 f"周期: {brief(m)} | 共振{r['bias']:+.2f}\n"
                 f"{p['why']}\n"
                 f"入场 {p['entry']:,.2f}  止损 {p['stop']:,.2f} ({p['risk_pct']:.2f}%)\n"
                 f"TP1 {p['tp1']:,.2f}  TP2 {p['tp2']:,.2f}\n"
-                f"名义 {notional:,.0f}U | 实际杠杆 {notional/eq:.2f}x | 保证金≈{margin:,.0f}U")
-        print(f"  >>> {p['side']} {p['why']}")
+                f"保证金 {margin:,.0f}U（权益{mpct*100:.0f}%）| 名义 {notional:,.0f}U @ {lev}x")
+        print(f"  >>> {side_cn} {p['why']}")
         print(f"      入场 {p['entry']:,.2f} 止损 {p['stop']:,.2f} TP1 {p['tp1']:,.2f} TP2 {p['tp2']:,.2f}")
         bark(title, body, dry=dry)
         st["cooldown"][key] = now
