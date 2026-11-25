@@ -166,6 +166,21 @@ def close_body(acc, p, fill, why, pnl, move, r_mult, hold):
             f"本金 {acc['cap']:,.0f}U（{(acc['cap']/START_CAP-1)*100:+.1f}%）")
 
 
+def open_body(coin, entry, stop, tp, margin, lev, eq, why, extra=""):
+    """模拟盘开仓推送正文：数量、风险/收益金额、资金占用、入场理由"""
+    notional = margin * lev
+    qty = notional / entry if entry else 0
+    fee = notional * FEE * 2
+    risk_u = notional * C_STOP + fee
+    rew_u = notional * C_TP - fee
+    pct = (margin / eq * 100) if eq else 0
+    return (f"入场 {entry:,.2f}  止损 {stop:,.2f}（-{C_STOP*100:.1f}%，亏 {risk_u:,.0f}U）\n"
+            f"止盈 {tp:,.2f}（+{C_TP*100:.1f}%，赚 {rew_u:,.0f}U）\n"
+            f"数量 {qty:,.4f} {coin} ｜ 保证金 {margin:,.0f}U（占本金 {pct:.1f}%）\n"
+            f"名义 {notional:,.0f}U ｜ {lev:.1f}x{extra}\n"
+            f"理由：{why}")
+
+
 def status(s):
     pxmap = {}
     for k in ACCOUNTS:
@@ -272,21 +287,20 @@ def scan(s):
             print(f"  [{k}] 开仓 {inst.split('-')[0]} {side} {lev:.1f}x 保证金{margin:,.0f} "
                   f"名义{margin*lev:,.0f} 入场{entry:,.2f} 止损{stop:,.2f} 止盈{tp:,.2f}")
             if k in ("C", "D"):
-                opened.append((k, entry, stop, tp, margin, lev))
+                opened.append((k, entry, stop, tp, margin, lev, eq))
 
         if len(opened) == 1:
-            k, entry, stop, tp, margin, lev = opened[0]
-            extra = f"\n放量 {vr:.2f}x（门槛 {mult}x）" if k == "D" and vr else ""
+            k, entry, stop, tp, margin, lev, eq_k = opened[0]
+            extra = f" ｜ 放量 {vr:.2f}x（门槛 {mult}x）" if k == "D" and vr else ""
             notify(f"模拟盘开{SCN.get(side, side)}-{k} {inst.split('-')[0]} {entry:,.0f}",
-                   f"止损 {stop:,.2f}（-{C_STOP*100:.1f}%）\n"
-                   f"止盈 {tp:,.2f}（+{C_TP*100:.1f}%）\n"
-                   f"保证金 {margin:,.0f}U | 名义 {margin*lev:,.0f}U | {lev:.1f}x{extra}")
+                   open_body(inst.split("-")[0], entry, stop, tp, margin, lev, eq_k,
+                             plan.get("why", ""), extra))
         elif len(opened) > 1:
-            k, entry, stop, tp, margin, lev = opened[0]
+            k, entry, stop, tp, margin, lev, eq_k = opened[0]
+            extra = f" ｜ 放量 {vr:.2f}x" if vr else ""
             notify(f"模拟盘开{SCN.get(side, side)}-C+D {inst.split('-')[0]} {entry:,.0f}",
-                   f"两个账户同时进场\n止损 {stop:,.2f}（-{C_STOP*100:.1f}%）\n"
-                   f"止盈 {tp:,.2f}（+{C_TP*100:.1f}%）\n"
-                   f"保证金 {margin:,.0f}U | {lev:.1f}x | 放量 {vr:.2f}x")
+                   open_body(inst.split("-")[0], entry, stop, tp, margin, lev, eq_k,
+                             plan.get("why", "") + "（C+D 同时进场）", extra))
     save_state(s)
 
 
