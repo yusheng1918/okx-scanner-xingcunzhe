@@ -85,7 +85,7 @@ def notify(title, body):
 
 def _new_acc():
     return {"cap": START_CAP, "used": 0.0, "pos": [], "wins": 0, "closed": 0,
-            "peak": START_CAP, "mdd": 0.0}
+            "peak": START_CAP, "mdd": 0.0, "r_sum": 0.0}
 
 
 def save_state(s):
@@ -109,6 +109,10 @@ def load_state():
         print("[paper] 检测到算法升级，四个账户重置为 10,000")
     for k in ACCOUNTS:
         s.setdefault(k, _new_acc())
+        a = s[k]
+        if "r_sum" not in a:
+            # 历史数据按标准 R 反推：止盈 +2.22R，止损 -1R
+            a["r_sum"] = a.get("wins", 0) * (C_TP / C_STOP) - (a.get("closed", 0) - a.get("wins", 0))
     return s
 
 
@@ -133,9 +137,12 @@ def close_position(acc, p, px, why):
     notional = p["margin"] * p["lev"]
     pnl = notional * move - notional * FEE * 2
     pnl = max(pnl, -p["margin"])                 # 逐仓，最多亏完保证金
+    r_mult = move / C_STOP                       # 以止损幅度为 1R
+    hold = (time.time() - p.get("open_ts", time.time())) / 3600
     acc["cap"] += pnl
     acc["used"] = max(0.0, acc["used"] - p["margin"])
     acc["closed"] += 1
+    acc["r_sum"] = acc.get("r_sum", 0.0) + r_mult
     if pnl > 0:
         acc["wins"] += 1
     acc["peak"] = max(acc["peak"], acc["cap"])
@@ -144,7 +151,19 @@ def close_position(acc, p, px, why):
     with open(LOG, "a", encoding="utf-8-sig") as f:
         f.write(f"{datetime.now(BJ):%Y-%m-%d %H:%M:%S},{p.get('acct','')},{p['inst']},{p['side']},"
                 f"{p['lev']:.2f},{p['entry']:.2f},{px:.2f},{pnl:.2f},{acc['cap']:.2f},{why}\n")
-    return pnl
+    return pnl, move, r_mult, hold
+
+
+def close_body(acc, p, fill, why, pnl, move, r_mult, hold):
+    """账户平仓推送正文：入场/出场、保证金、R、持有时间、本源累计"""
+    icon = "✅" if pnl > 0 else "❌"
+    closed, wins = acc["closed"], acc["wins"]
+    losses = closed - wins
+    wr = (wins / closed * 100) if closed else 0.0
+    return (f"{why} {icon}  入场 {p['entry']:,.2f} → 出场 {fill:,.2f}（{move*100:+.2f}%）\n"
+            f"保证金 {p['margin']:,.0f}U @{p['lev']:.0f}x  ｜  {r_mult:+.2f}R  ｜  持有 {hold:.1f} 小时\n"
+            f"本源累计：{closed} 笔 ｜ 胜 {wins} 负 {losses} ｜ 胜率 {wr:.1f}% ｜ {acc.get('r_sum', 0):+.1f}R\n"
+            f"本金 {acc['cap']:,.0f}U（{(acc['cap']/START_CAP-1)*100:+.1f}%）")
 
 
 def status(s):
@@ -188,11 +207,11 @@ def scan(s):
                 hit_stop = (px >= p["stop"]) if p["side"] == "SHORT" else (px <= p["stop"])
                 hit_tp = (px <= p["tp"]) if p["side"] == "SHORT" else (px >= p["tp"])
                 if hit_liq:
-                    pnl = close_position(s[k], p, liq_px, "强平")
+                    pnl, mv, rr, hold = close_position(s[k], p, liq_px, "强平")
                     print(f"  [{k}] 强平 {inst.split('-')[0]} {p['side']} @{liq_px:,.2f} {pnl:+,.0f}U")
                     if k in ("C", "D"):
-                        notify(f"{k}强平-{inst.split('-')[0]} {pnl:+,.0f}U",
-                               f"保证金亏完 @{liq_px:,.2f}\n本金 {s[k]['cap']:,.0f}U")
+                        notify(f"{k}强平-{inst.split('-')[0]} {SCN.get(p['side'], p['side'])} {pnl:+,.0f}U",
+                               close_body(s[k], p, liq_px, "强平", pnl, mv, rr, hold))
                 elif hit_stop or hit_tp:
                     if hit_stop:
                         fill = p["stop"] * (1 + 0.0005) if p["side"] == "SHORT" else p["stop"] * (1 - 0.0005)
@@ -200,12 +219,12 @@ def scan(s):
                     else:
                         fill = p["tp"] * (1 - 0.0005) if p["side"] == "SHORT" else p["tp"] * (1 + 0.0005)
                         why = "止盈"
-                    pnl = close_position(s[k], p, fill, why)
+                    pnl, mv, rr, hold = close_position(s[k], p, fill, why)
                     print(f"  [{k}] 平仓 {inst.split('-')[0]} {p['side']} @{fill:,.2f} {why} "
                           f"{pnl:+,.0f}U → 本金 {s[k]['cap']:,.0f}U")
                     if k in ("C", "D"):
                         notify(f"{k}平仓-{inst.split('-')[0]} {SCN.get(p['side'], p['side'])} {pnl:+,.0f}U",
-                               f"{why} @{fill:,.2f}\n本金 {s[k]['cap']:,.0f}U（{(s[k]['cap']/START_CAP-1)*100:+.1f}%）")
+                               close_body(s[k], p, fill, why, pnl, mv, rr, hold))
 
         try:
             r = scanner.analyse(inst)
