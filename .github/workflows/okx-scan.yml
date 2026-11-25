@@ -60,6 +60,11 @@ jobs:
             python paper.py --status 2>&1 || true
             echo '```'
             echo ""
+            echo "## 信号战绩"
+            echo '```'
+            python -c "import json;d=json.load(open('.scan_state.json',encoding='utf-8-sig'));s=d.get('stats',{});n=s.get('n',0);w=s.get('w',0);l=s.get('l',0);r=s.get('r',0);op=len(d.get('open',[]));print('累计 %d 笔 | 胜 %d 负 %d | 胜率 %.1f%% | %+.1fR | 待结算 %d 笔' % (n,w,l,(w/n*100 if n else 0),r,op))" 2>/dev/null || echo "暂无信号记录"
+            echo '```'
+            echo ""
             echo "## 最近成交"
             echo '```'
             tail -n 15 paper_log.csv 2>/dev/null || echo "暂无成交"
